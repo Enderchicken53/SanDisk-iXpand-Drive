@@ -8,8 +8,17 @@ echo "== Xcode =="
 XCODE_BASE="$(xcode-select -p | sed 's#/Contents/Developer$##')"
 echo "XCODE_BASE=$XCODE_BASE"
 xcodebuild -version
+
 SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+CLANG="$(xcrun --sdk iphoneos -f clang)"
+
 echo "SDK=$SDK"
+echo "CLANG=$CLANG"
+
+if [ ! -x "$CLANG" ]; then
+  echo "ERROR: clang was not found."
+  exit 2
+fi
 
 if [ ! -f "iXpand Drive.a" ]; then
   echo "ERROR: iXpand Drive.a is missing."
@@ -21,80 +30,202 @@ if [ ! -d "$APP" ]; then
   exit 2
 fi
 
-# The public repository's original script copies an old provisioning profile.
-# The current public tree does not expose that profile, and we want an unsigned
-# build that can later be signed by the user's own identity.
+echo "== Inspecting libraries =="
+
+echo "--- Main application library ---"
+file "iXpand Drive.a"
+xcrun lipo -info "iXpand Drive.a" || true
+
+echo "--- Library directory ---"
+find lib -maxdepth 2 -type f | sort | head -200
+
+echo "--- Framework directory ---"
+find frameworks -maxdepth 2 -type f | sort | head -200
+
+# Remove anything from the old application bundle that would interfere
+# with producing an unsigned IPA.
 rm -f "$APP/embedded.mobileprovision"
 rm -rf "$APP/_CodeSignature"
 rm -f "$APP/iXpand Drive"
 
-# Copy the repository metadata that the original script uses.
+# Copy application metadata.
 cp Info.plist "$APP/Info.plist"
+
 if [ -f GoogleService-Info.plist ]; then
   cp GoogleService-Info.plist "$APP/GoogleService-Info.plist"
 fi
 
-CLANG="$XCODE_BASE/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang"
+echo
+echo "== Checking C++ libraries =="
 
+if [ -f "$SDK/usr/lib/libc++.tbd" ]; then
+  echo "Modern libc++ found."
+else
+  echo "WARNING: libc++ not found."
+fi
+
+if [ -f "lib/libstdc++.a" ]; then
+  echo "Bundled libstdc++.a found."
+  STDCPP_PATH="$PWD/lib/libstdc++.a"
+else
+  echo "Bundled libstdc++.a NOT found."
+  STDCPP_PATH=""
+fi
+
+echo
 echo "== Linking arm64 =="
-"$CLANG" \
-  -std=c++11 \
-  -arch arm64 \
-  -isysroot "$SDK" \
-  "iXpand Drive.a" \
-  -dead_strip -ObjC \
-  -Llib -Fframeworks \
-  -l"AFNetworking" -l"BlocksKit" -l"Bolts" -l"CSStickyHeaderFlowLayout" \
-  -l"CocoaAsyncSocket" -l"CocoaHTTPServer" -l"CocoaLumberjack" -l"DFCache" \
-  -l"FBSDKCoreKit" -l"FBSDKLoginKit" -l"FXKeychain" -l"GGLCore" -l"GGLSignIn" \
-  -l"GIPNSURL+FIFE_external" -l"GSDK_Overload_external" \
-  -l"GTMOAuth2_external_external" -l"GTMOAuth2_internal_external" \
-  -l"GTMSessionFetcher_core_external" -l"GTMSessionFetcher_full_external" \
-  -l"GTMStackTrace_external" -l"GTM_AddressBook_external" \
-  -l"GTM_DebugUtils_external" -l"GTM_GTMURLBuilder_external" -l"GTM_KVO_external" \
-  -l"GTM_NSData+zlib" -l"GTM_NSDictionary+URLArguments_external" \
-  -l"GTM_NSScannerJSON_external" -l"GTM_NSStringHTML_external" \
-  -l"GTM_NSStringXML_external" -l"GTM_Regex_external" \
-  -l"GTM_RoundedRectPath_external" -l"GTM_StringEncoding_external" \
-  -l"GTM_SystemVersion_external" -l"GTM_UIFont+LineHeight_external" \
-  -l"GTM_core_external" -l"GTM_iPhone_external" -l"InstagramKit" \
-  -l"LocalyticsAMP_x64" -l"NSLogger" -l"NSLogger-CocoaLumberjack-connector" \
-  -l"OpenInChrome_external" -l"ProtocolBuffers_external" -l"RFQuiltLayout" \
-  -l"RHAddressBook" -l"Reachability" -l"SSZipArchive" -l"SVWebViewController" \
-  -l"SignIn_external" -l"UICKeyChainStore" -l"apptentive-ios" -l"bz2" \
-  -l"c++" -l"iconv" -l"sqlite3" -l"stdc++" -l"xml2" -l"z" \
-  -framework "AVFoundation" -framework "AddressBook" -framework "AddressBookUI" \
-  -framework "AssetsLibrary" -framework "AudioToolbox" -framework "CFNetwork" \
-  -framework "CoreData" -framework "CoreFoundation" -framework "CoreGraphics" \
-  -framework "CoreLocation" -framework "CoreMotion" -framework "CoreText" \
-  -framework "Crashlytics" -framework "Fabric" -framework "Foundation" \
-  -framework "HockeySDK" -framework "ImageIO" -framework "MessageUI" \
-  -framework "MobileCoreServices" -framework "MobileVLCKit" -framework "OpenGLES" \
-  -framework "QuartzCore" -framework "QuickLook" -framework "SafariServices" \
-  -framework "Security" -framework "SystemConfiguration" -framework "UIKit" \
-  -weak_framework "Accounts" -weak_framework "AdSupport" \
-  -weak_framework "AudioToolbox" -weak_framework "CoreGraphics" \
-  -weak_framework "CoreLocation" -weak_framework "CoreTelephony" \
-  -weak_framework "Foundation" -weak_framework "QuartzCore" \
-  -weak_framework "Security" -weak_framework "Social" -weak_framework "StoreKit" \
-  -weak_framework "UIKit" \
-  -framework "CoreData" -framework "ExternalAccessory" -framework "MediaPlayer" \
-  -fobjc-link-runtime \
-  -miphoneos-version-min=8.2 \
+
+LINK_ARGS=(
+  -arch arm64
+  -isysroot "$SDK"
+
+  "iXpand Drive.a"
+
+  -dead_strip
+  -ObjC
+
+  -Llib
+  -Fframeworks
+
+  -lAFNetworking
+  -lBlocksKit
+  -lBolts
+  -lCSStickyHeaderFlowLayout
+  -lCocoaAsyncSocket
+  -lCocoaHTTPServer
+  -lCocoaLumberjack
+  -lDFCache
+  -lFBSDKCoreKit
+  -lFBSDKLoginKit
+  -lFXKeychain
+  -lGGLCore
+  -lGGLSignIn
+
+  -lGIPNSURL+FIFE_external
+  -lGSDK_Overload_external
+  -lGTMOAuth2_external_external
+  -lGTMOAuth2_internal_external
+  -lGTMSessionFetcher_core_external
+  -lGTMSessionFetcher_full_external
+  -lGTMStackTrace_external
+  -lGTM_AddressBook_external
+  -lGTM_DebugUtils_external
+  -lGTM_GTMURLBuilder_external
+  -lGTM_KVO_external
+  -lGTM_NSData+zlib
+  -lGTM_NSDictionary+URLArguments_external
+  -lGTM_NSScannerJSON_external
+  -lGTM_NSStringHTML_external
+  -lGTM_NSStringXML_external
+  -lGTM_Regex_external
+  -lGTM_RoundedRectPath_external
+  -lGTM_StringEncoding_external
+  -lGTM_SystemVersion_external
+  -lGTM_UIFont+LineHeight_external
+  -lGTM_core_external
+  -lGTM_iPhone_external
+
+  -lInstagramKit
+  -lLocalyticsAMP_x64
+  -lNSLogger
+  -lNSLogger-CocoaLumberjack-connector
+  -lOpenInChrome_external
+  -lProtocolBuffers_external
+  -lRFQuiltLayout
+  -lRHAddressBook
+  -lReachability
+  -lSSZipArchive
+  -lSVWebViewController
+  -lSignIn_external
+  -lUICKeyChainStore
+  -lapptentive-ios
+  -lbz2
+  -liconv
+  -lsqlite3
+  -lxml2
+  -lz
+
+  -framework AVFoundation
+  -framework AddressBook
+  -framework AddressBookUI
+  -framework AssetsLibrary
+  -framework AudioToolbox
+  -framework CFNetwork
+  -framework CoreData
+  -framework CoreFoundation
+  -framework CoreGraphics
+  -framework CoreLocation
+  -framework CoreMotion
+  -framework CoreText
+  -framework Crashlytics
+  -framework Fabric
+  -framework Foundation
+  -framework HockeySDK
+  -framework ImageIO
+  -framework MessageUI
+  -framework MobileCoreServices
+  -framework MobileVLCKit
+  -framework OpenGLES
+  -framework QuartzCore
+  -framework QuickLook
+  -framework SafariServices
+  -framework Security
+  -framework SystemConfiguration
+  -framework UIKit
+
+  -weak_framework Accounts
+  -weak_framework AdSupport
+  -weak_framework CoreTelephony
+  -weak_framework Social
+  -weak_framework StoreKit
+
+  -framework ExternalAccessory
+  -framework MediaPlayer
+
+  -fobjc-link-runtime
+  -miphoneos-version-min=8.2
+
   -o "$APP/iXpand Drive"
+)
 
+# The old project requested libstdc++.
+# Modern Xcode no longer ships Apple's old libstdc++.
+# If the repository contains its own copy, use it explicitly.
+if [ -n "$STDCPP_PATH" ]; then
+  LINK_ARGS+=("$STDCPP_PATH")
+else
+  echo
+  echo "WARNING: No bundled libstdc++.a."
+  echo "Using modern libc++ instead."
+  LINK_ARGS+=(-lc++)
+fi
+
+"$CLANG" "${LINK_ARGS[@]}"
+
+echo
 echo "== Verify executable =="
-file "$APP/iXpand Drive" || true
-xcrun otool -L "$APP/iXpand Drive" | sed -n '1,160p' || true
 
+file "$APP/iXpand Drive"
+xcrun lipo -info "$APP/iXpand Drive" || true
+
+echo
+echo "== Linked frameworks/libraries =="
+
+xcrun otool -L "$APP/iXpand Drive" | sed -n '1,200p' || true
+
+echo
 echo "== Prepare IPA =="
+
 rm -rf Payload
 mkdir Payload
+
 cp -R "$APP" "Payload/iXpand Drive.app"
 
 rm -f "$OUT"
 /usr/bin/zip -qry "$OUT" Payload
 
 echo
+echo "========================================"
 echo "SUCCESS: $OUT"
 echo "This IPA is unsigned."
+echo "========================================"
