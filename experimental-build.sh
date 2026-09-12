@@ -183,7 +183,7 @@ LINK_ARGS=(
   -framework MediaPlayer
 
   -fobjc-link-runtime
-  -miphoneos-version-min=8.2
+  -miphoneos-version-min=12.0
 
   -o "$APP/iXpand Drive"
 )
