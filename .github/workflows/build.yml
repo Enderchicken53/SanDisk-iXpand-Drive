@@ -1,0 +1,174 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")"
+bash ./experimental-build.sh
+
+#!/usr/bin/env bash
+set -euo pipefail
+
+APP="app/iXpand Drive.app"
+OUT="iXpand-unsigned.ipa"
+
+echo "== Xcode =="
+XCODE_BASE="$(xcode-select -p | sed 's#/Contents/Developer$##')"
+echo "XCODE_BASE=$XCODE_BASE"
+xcodebuild -version
+SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+echo "SDK=$SDK"
+
+if [ ! -f "iXpand Drive.a" ]; then
+  echo "ERROR: iXpand Drive.a is missing."
+  exit 2
+fi
+
+if [ ! -d "$APP" ]; then
+  echo "ERROR: $APP is missing."
+  exit 2
+fi
+
+# The public repository's original script copies an old provisioning profile.
+# The current public tree does not expose that profile, and we want an unsigned
+# build that can later be signed by the user's own identity.
+rm -f "$APP/embedded.mobileprovision"
+rm -rf "$APP/_CodeSignature"
+rm -f "$APP/iXpand Drive"
+
+# Copy the repository metadata that the original script uses.
+cp Info.plist "$APP/Info.plist"
+if [ -f GoogleService-Info.plist ]; then
+  cp GoogleService-Info.plist "$APP/GoogleService-Info.plist"
+fi
+
+CLANG="$XCODE_BASE/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang"
+
+echo "== Linking arm64 =="
+"$CLANG" \
+  -std=c++11 \
+  -arch arm64 \
+  -isysroot "$SDK" \
+  "iXpand Drive.a" \
+  -dead_strip -ObjC \
+  -Llib -Fframeworks \
+  -l"AFNetworking" -l"BlocksKit" -l"Bolts" -l"CSStickyHeaderFlowLayout" \
+  -l"CocoaAsyncSocket" -l"CocoaHTTPServer" -l"CocoaLumberjack" -l"DFCache" \
+  -l"FBSDKCoreKit" -l"FBSDKLoginKit" -l"FXKeychain" -l"GGLCore" -l"GGLSignIn" \
+  -l"GIPNSURL+FIFE_external" -l"GSDK_Overload_external" \
+  -l"GTMOAuth2_external_external" -l"GTMOAuth2_internal_external" \
+  -l"GTMSessionFetcher_core_external" -l"GTMSessionFetcher_full_external" \
+  -l"GTMStackTrace_external" -l"GTM_AddressBook_external" \
+  -l"GTM_DebugUtils_external" -l"GTM_GTMURLBuilder_external" -l"GTM_KVO_external" \
+  -l"GTM_NSData+zlib" -l"GTM_NSDictionary+URLArguments_external" \
+  -l"GTM_NSScannerJSON_external" -l"GTM_NSStringHTML_external" \
+  -l"GTM_NSStringXML_external" -l"GTM_Regex_external" \
+  -l"GTM_RoundedRectPath_external" -l"GTM_StringEncoding_external" \
+  -l"GTM_SystemVersion_external" -l"GTM_UIFont+LineHeight_external" \
+  -l"GTM_core_external" -l"GTM_iPhone_external" -l"InstagramKit" \
+  -l"LocalyticsAMP_x64" -l"NSLogger" -l"NSLogger-CocoaLumberjack-connector" \
+  -l"OpenInChrome_external" -l"ProtocolBuffers_external" -l"RFQuiltLayout" \
+  -l"RHAddressBook" -l"Reachability" -l"SSZipArchive" -l"SVWebViewController" \
+  -l"SignIn_external" -l"UICKeyChainStore" -l"apptentive-ios" -l"bz2" \
+  -l"c++" -l"iconv" -l"sqlite3" -l"stdc++" -l"xml2" -l"z" \
+  -framework "AVFoundation" -framework "AddressBook" -framework "AddressBookUI" \
+  -framework "AssetsLibrary" -framework "AudioToolbox" -framework "CFNetwork" \
+  -framework "CoreData" -framework "CoreFoundation" -framework "CoreGraphics" \
+  -framework "CoreLocation" -framework "CoreMotion" -framework "CoreText" \
+  -framework "Crashlytics" -framework "Fabric" -framework "Foundation" \
+  -framework "HockeySDK" -framework "ImageIO" -framework "MessageUI" \
+  -framework "MobileCoreServices" -framework "MobileVLCKit" -framework "OpenGLES" \
+  -framework "QuartzCore" -framework "QuickLook" -framework "SafariServices" \
+  -framework "Security" -framework "SystemConfiguration" -framework "UIKit" \
+  -weak_framework "Accounts" -weak_framework "AdSupport" \
+  -weak_framework "AudioToolbox" -weak_framework "CoreGraphics" \
+  -weak_framework "CoreLocation" -weak_framework "CoreTelephony" \
+  -weak_framework "Foundation" -weak_framework "QuartzCore" \
+  -weak_framework "Security" -weak_framework "Social" -weak_framework "StoreKit" \
+  -weak_framework "UIKit" \
+  -framework "CoreData" -framework "ExternalAccessory" -framework "MediaPlayer" \
+  -fobjc-link-runtime \
+  -miphoneos-version-min=8.2 \
+  -o "$APP/iXpand Drive"
+
+echo "== Verify executable =="
+file "$APP/iXpand Drive" || true
+xcrun otool -L "$APP/iXpand Drive" | sed -n '1,160p' || true
+
+echo "== Prepare IPA =="
+rm -rf Payload
+mkdir Payload
+cp -R "$APP" "Payload/iXpand Drive.app"
+
+rm -f "$OUT"
+/usr/bin/zip -qry "$OUT" Payload
+
+echo
+echo "SUCCESS: $OUT"
+echo "This IPA is unsigned."
+
+@echo off
+setlocal
+echo This script prepares a SanDisk iXpand Drive source checkout for the macOS build.
+echo.
+where git >nul 2>nul
+if errorlevel 1 (
+  echo Git is not installed or not on PATH.
+  exit /b 1
+)
+if not exist SanDisk-iXpand-Drive (
+  git clone https://github.com/SanDisk-Open-Source/SanDisk-iXpand-Drive.git SanDisk-iXpand-Drive
+)
+copy /Y experimental-build.sh SanDisk-iXpand-Drive\experimental-build.sh
+echo.
+echo Prepared: SanDisk-iXpand-Drive
+echo The actual compile step must run on macOS/Xcode.
+
+# iXpand Drive rebuild kit
+
+This kit prepares SanDisk's public iXpand Drive object-code repository for an experimental modern-Xcode build.
+
+IMPORTANT:
+- This does NOT contain SanDisk's 68 MB `iXpand Drive.a`; the official repository supplies it.
+- It does NOT contain an IPA or signing credentials.
+- The original SanDisk build script targets armv7 + arm64, iOS 8.2, and libstdc++. Modern Xcode no longer supports all of those settings, so this kit attempts an arm64-only build using the SDK installed on the runner/Mac.
+- Build success is NOT guaranteed. The bundled third-party libraries may themselves be too old for a modern SDK.
+- If the build succeeds, the result is an UNSIGNED IPA suitable for signing with your own Apple development identity (for example with Sideloadly).
+
+## Easiest route
+
+1. Fork:
+   https://github.com/SanDisk-Open-Source/SanDisk-iXpand-Drive
+2. Copy `.github/workflows/build.yml` from this kit into your fork.
+3. Push it to your fork.
+4. Open GitHub -> Actions -> `Build iXpand Drive`.
+5. Run the workflow manually.
+6. Download the `iXpand-unsigned` artifact.
+7. Sign the resulting IPA with your own Apple ID using Sideloadly.
+
+## What this changes
+
+The original SanDisk script:
+- uses `/Applications/Xcode.app`
+- requests armv7 + arm64
+- requests `-stdlib=libstdc++`
+- copies a provisioning profile that is not present in the current public repository
+- signs using an empty placeholder identity
+
+This experimental script:
+- discovers the selected Xcode path
+- builds arm64 only
+- removes the obsolete `-stdlib=libstdc++` compiler option
+- does not require SanDisk's old provisioning profile
+- leaves the app unsigned
+- packages `Payload/iXpand Drive.app` as an IPA
+
+The `ExternalAccessory` framework is retained because it is part of the original SanDisk link command and is relevant to Lightning accessory communication.
+
+## If it fails
+
+The first useful failure is likely to be one of:
+- old object files/libraries incompatible with the installed SDK
+- missing old symbols from libstdc++
+- obsolete framework names
+- architecture mismatch
+- code-signing/entitlement problems after signing
+
+The workflow uploads `build.log` even on failure.
